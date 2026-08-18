@@ -21,13 +21,42 @@ def load_data(
     file,
     experiment_kwargs,
     velocity_kwargs,
+    trial_columns,
 ):
     experiment_kwargs = dict(experiment_kwargs)
     velocity_kwargs = dict(velocity_kwargs)
     experiment = pm.Experiment(**experiment_kwargs)
-    gaze = pm.gaze.from_csv(
-        file, pixel_columns=["pixel_x", "pixel_y"], experiment=experiment
-    )
+    if file.name.endswith(".csv"):
+        gaze = pm.gaze.from_csv(
+            file,
+            pixel_columns=["pixel_x", "pixel_y"],
+            experiment=experiment,
+            trial_columns=trial_columns,
+        )
+    elif file.name.endswith(".tsv"):
+        gaze = pm.gaze.from_csv(
+            file,
+            pixel_columns=["pixel_x", "pixel_y"],
+            experiment=experiment,
+            trial_columns=trial_columns,
+            read_csv_kwargs={"separator": "\t"},
+        )
+    elif file.name.endswith(".asc"):
+        gaze = pm.gaze.from_asc(
+            file,
+            experiment=experiment,
+            patterns=[
+                r"TRIALID (?P<trial_id>.+)",
+                {
+                    "pattern": r"TRIAL_RESULT .+",
+                    "column": "trial_id",
+                    "value": None,
+                },
+            ],
+            trial_columns=trial_columns,
+        )
+    else:
+        raise ValueError(f"Unsupported file type: {file.name}")
     gaze.pix2deg()
     gaze.pos2vel(**velocity_kwargs)
     gaze.samples = gaze.samples.with_columns(
@@ -53,16 +82,37 @@ if data_choice == "Example data (GGTG)":
         "screen_height_cm": 25.2,
         "distance_cm": 66,
     }
+    trial_columns = ["stimulus"]
 else:
-    file = st.sidebar.file_uploader("Samples file", type=["csv"])
+    file = st.sidebar.file_uploader("Gaze file", type=["csv", "tsv", "asc"])
     experiment_kwargs = {
         "sampling_rate": st.sidebar.number_input("Sampling rate (Hz)", value=1000),
-        "screen_width_px": st.sidebar.number_input("Screen width (px)", value=1920),
-        "screen_height_px": st.sidebar.number_input("Screen height (px)", value=1080),
-        "screen_width_cm": st.sidebar.number_input("Screen width (cm)", value=52.7),
-        "screen_height_cm": st.sidebar.number_input("Screen height (cm)", value=29.6),
-        "distance_cm": st.sidebar.number_input("Eye-to-screen distance (cm)", value=60),
+        "screen_width_px": st.sidebar.number_input(
+            "Screen width (px)", value=1920, key="screen_width_px"
+        ),
+        "screen_height_px": st.sidebar.number_input(
+            "Screen height (px)", value=1080, key="screen_height_px"
+        ),
+        "screen_width_cm": st.sidebar.number_input("Screen width (cm)", value=53.0),
+        "screen_height_cm": st.sidebar.number_input("Screen height (cm)", value=30.0),
+        "distance_cm": st.sidebar.number_input(
+            "Eye-to-screen distance (cm)", value=60.0
+        ),
     }
+    if file is not None:
+        if file.name.endswith(".asc"):
+            trial_columns = ["trial_id"]
+        else:
+            trial_columns = st.sidebar.text_input(
+                "Trial columns (comma-separated)", value=None
+            )
+            if trial_columns:
+                trial_columns = [
+                    column.strip()
+                    for column in trial_columns.split(",")
+                ]
+            else:
+                trial_columns = None
 
 fixation_tab, velocity_tab = st.tabs(["Fixation detection", "Velocity calculation"])
 with fixation_tab:
@@ -99,7 +149,20 @@ if file is not None:
         file,
         tuple(sorted(experiment_kwargs.items())),
         tuple(sorted(velocity_kwargs.items())),
+        trial_columns,
     )
+    if trial_columns is not None:
+        # combine trial column values with | as separator
+        trials = gaze.samples.select(trial_columns).unique(maintain_order=True).map_rows(
+            lambda row: "|".join(row)
+        ).to_series().to_list()
+        trial = st.selectbox("Trial", trials)
+        gaze.samples = gaze.samples.filter(
+            pl.concat_list([pl.col(c) for c in trial_columns]).map_elements(
+                lambda x: "|".join(x)
+            )
+            == trial
+        )
     min_time = gaze.samples["time"].min()
     max_time = gaze.samples["time"].max()
     col1, col2 = st.columns(2)
@@ -168,9 +231,23 @@ if file is not None:
             code += f"    {k}={v},\n"
         code += ")\n"
         code += f"# Load gaze data\n"
-        code += f"gaze = pm.gaze.from_csv(\n"
-        code += f"    {file.name!r}, pixel_columns=['pixel_x', 'pixel_y'], experiment=experiment\n"
-        code += ")\n"
+        if file.name.endswith(".csv"):
+            code += f"gaze = pm.gaze.from_csv(\n"
+            code += f"    {file.name!r}, pixel_columns=['pixel_x', 'pixel_y'], experiment=experiment\n"
+            code += ")\n"
+        elif file.name.endswith(".tsv"):
+            code += f"gaze = pm.gaze.from_csv(\n"
+            code += f"    {file.name!r}, pixel_columns=['pixel_x', 'pixel_y'], experiment=experiment, read_csv_kwargs={{'separator': '\\t'}}\n"
+            code += ")\n"
+        elif file.name.endswith(".asc"):
+            code += f"gaze = pm.gaze.from_asc(\n"
+            code += f"    {file.name!r}, experiment=experiment,\n"
+            code += f"    patterns=[\n"
+            code += f"        r'TRIALID (?P<trial_id>.+)',\n"
+            code += f"        {{'pattern': r'TRIAL_RESULT .+', 'column': 'trial_id', 'value': None}},\n"
+            code += f"    ],\n"
+            code += f"    trial_columns={trial_columns!r},\n"
+            code += ")\n"
         code += f"# Convert pixel coordinates to degrees of visual angle\n"
         code += "gaze.pix2deg()\n"
         if fixation_algorithm == "ivt":
