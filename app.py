@@ -154,12 +154,12 @@ if file is not None:
     if trial_columns is not None:
         # combine trial column values with | as separator
         trials = gaze.samples.select(trial_columns).unique(maintain_order=True).map_rows(
-            lambda row: "|".join(row)
+            lambda row: "|".join(map(str, row))
         ).to_series().to_list()
         trial = st.selectbox("Trial", trials)
         gaze.samples = gaze.samples.filter(
             pl.concat_list([pl.col(c) for c in trial_columns]).map_elements(
-                lambda x: "|".join(x)
+                lambda x: "|".join(map(str, x))
             )
             == trial
         )
