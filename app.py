@@ -143,14 +143,16 @@ with fixation_tab:
         index=algorithm_choices.index("ivt"),
     )
     if fixation_algorithm == "idt":
+        col1, col2 = st.columns(2)
         fixation_kwargs = {
-            "minimum_duration": st.slider("Minimum duration", 1, 1000, 100),
-            "dispersion_threshold": st.slider("Dispersion threshold", 0.1, 2.0, 1.0),
+            "dispersion_threshold": col1.slider("Dispersion threshold", 0.1, 2.0, 1.0),
+            "minimum_duration": col2.slider("Minimum duration", 1, 1000, 100),
         }
     elif fixation_algorithm == "ivt":
+        col1, col2 = st.columns(2)
         fixation_kwargs = {
-            "minimum_duration": st.slider("Minimum duration", 1, 1000, 100),
-            "velocity_threshold": st.slider("Velocity threshold", 1.0, 80.0, 20.0),
+            "minimum_duration": col2.slider("Minimum duration", 1, 1000, 100),
+            "velocity_threshold": col1.slider("Velocity threshold", 1.0, 80.0, 20.0),
         }
 with saccade_tab:
     algorithm_choices = list(SACCADE_ALGORITHMS.keys())
@@ -162,15 +164,16 @@ with saccade_tab:
     )
     if saccade_algorithm == "microsaccades":
         threshold_choices = list(MICROSACCADE_THRESHOLDS.keys())
+        col1, col2, col3 = st.columns(3)
         saccade_kwargs = {
-            "minimum_duration": st.slider("Minimum duration", 1, 1000, 6),
-            "threshold": st.selectbox(
+            "threshold": col1.selectbox(
                 "Threshold",
                 threshold_choices,
                 format_func=MICROSACCADE_THRESHOLDS.get,
                 index=threshold_choices.index("engbert2015"),
             ),
-            "threshold_factor": st.slider("Threshold factor", 1.0, 20.0, 6.0),
+            "threshold_factor": col2.slider("Threshold factor", 1.0, 20.0, 6.0),
+            "minimum_duration": col3.slider("Minimum duration", 1, 1000, 6),
         }
 with velocity_tab:
     velocity_method = st.selectbox(
@@ -179,9 +182,10 @@ with velocity_tab:
         format_func=VELOCITY_METHODS.get,
     )
     if velocity_method == "savitzky_golay":
+        col1, col2 = st.columns(2)
         velocity_kwargs = {
-            "window_length": st.slider("Window length", 3, 51, 21, step=2),
-            "degree": st.slider("Polynomial order", 1, 5, 2),
+            "window_length": col1.slider("Window length", 3, 51, 21, step=2),
+            "degree": col2.slider("Polynomial order", 1, 5, 2),
         }
     else:
         velocity_kwargs = {}
