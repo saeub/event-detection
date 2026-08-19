@@ -5,8 +5,19 @@ import pymovements as pm
 import streamlit as st
 
 FIXATION_ALGORITHMS = {
+    None: "None",
     "idt": "I-DT",
     "ivt": "I-VT",
+}
+SACCADE_ALGORITHMS = {
+    None: "None",
+    "microsaccades": "Microsaccade",
+}
+MICROSACCADE_THRESHOLDS = {
+    "std": "Standard deviation",
+    "mad": "Median absolute deviation",
+    "engbert2003": "Engbert & Kliegl (2003)",
+    "engbert2015": "Engbert (2015)",
 }
 VELOCITY_METHODS = {
     "savitzky_golay": "Savitzky-Golay",
@@ -107,17 +118,20 @@ else:
                 "Trial columns (comma-separated)", value=None
             )
             if trial_columns:
-                trial_columns = [
-                    column.strip()
-                    for column in trial_columns.split(",")
-                ]
+                trial_columns = [column.strip() for column in trial_columns.split(",")]
             else:
                 trial_columns = None
 
-fixation_tab, velocity_tab = st.tabs(["Fixation detection", "Velocity calculation"])
+fixation_tab, saccade_tab, velocity_tab = st.tabs(
+    ["Fixation detection", "Saccade detection", "Velocity calculation"]
+)
 with fixation_tab:
+    algorithm_choices = list(FIXATION_ALGORITHMS.keys())
     fixation_algorithm = st.selectbox(
-        "Algorithm", FIXATION_ALGORITHMS.keys(), format_func=FIXATION_ALGORITHMS.get
+        "Algorithm",
+        algorithm_choices,
+        format_func=FIXATION_ALGORITHMS.get,
+        index=algorithm_choices.index("ivt"),
     )
     if fixation_algorithm == "idt":
         fixation_kwargs = {
@@ -128,6 +142,26 @@ with fixation_tab:
         fixation_kwargs = {
             "minimum_duration": st.slider("Minimum duration", 1, 1000, 100),
             "velocity_threshold": st.slider("Velocity threshold", 1.0, 80.0, 20.0),
+        }
+with saccade_tab:
+    algorithm_choices = list(SACCADE_ALGORITHMS.keys())
+    saccade_algorithm = st.selectbox(
+        "Algorithm",
+        algorithm_choices,
+        format_func=SACCADE_ALGORITHMS.get,
+        index=algorithm_choices.index(None),
+    )
+    if saccade_algorithm == "microsaccades":
+        threshold_choices = list(MICROSACCADE_THRESHOLDS.keys())
+        saccade_kwargs = {
+            "minimum_duration": st.slider("Minimum duration", 1, 1000, 6),
+            "threshold": st.selectbox(
+                "Threshold",
+                threshold_choices,
+                format_func=MICROSACCADE_THRESHOLDS.get,
+                index=threshold_choices.index("engbert2015"),
+            ),
+            "threshold_factor": st.slider("Threshold factor", 1.0, 20.0, 6.0),
         }
 with velocity_tab:
     velocity_method = st.selectbox(
@@ -153,9 +187,13 @@ if file is not None:
     )
     if trial_columns is not None:
         # combine trial column values with | as separator
-        trials = gaze.samples.select(trial_columns).unique(maintain_order=True).map_rows(
-            lambda row: "|".join(map(str, row))
-        ).to_series().to_list()
+        trials = (
+            gaze.samples.select(trial_columns)
+            .unique(maintain_order=True)
+            .map_rows(lambda row: "|".join(map(str, row)))
+            .to_series()
+            .to_list()
+        )
         trial = st.selectbox("Trial", trials)
         gaze.samples = gaze.samples.filter(
             pl.concat_list([pl.col(c) for c in trial_columns]).map_elements(
@@ -166,7 +204,7 @@ if file is not None:
     min_time = gaze.samples["time"].min()
     max_time = gaze.samples["time"].max()
     col1, col2 = st.columns(2)
-    duration = col2.slider("Duration (ms)", 1, 20000, 2000)
+    duration = col2.slider("Duration (ms)", 1, 50000, 2000)
     start_time = col1.slider("Start (ms)", min_time, max_time - duration, min_time)
     gaze.samples = gaze.samples.filter(
         gaze.samples["time"].is_between(start_time, start_time + duration)
@@ -174,28 +212,50 @@ if file is not None:
     if gaze.samples.is_empty():
         st.warning("No samples in the selected time range.")
     else:
-        gaze.detect(fixation_algorithm, **fixation_kwargs)
-        gaze.compute_event_properties(("location", {"position_column": "pixel"}))
+        if fixation_algorithm is not None:
+            gaze.detect(fixation_algorithm, **fixation_kwargs, name="fixation")
+            gaze.compute_event_properties(
+                ("location", {"position_column": "pixel"}), name="fixation"
+            )
+            gaze.events.frame = gaze.events.frame.rename({"location": "mean_location"})
+        if saccade_algorithm is not None:
+            gaze.detect(saccade_algorithm, **saccade_kwargs, name="saccade")
+            gaze.compute_event_properties("amplitude", name="saccade")
+            gaze.compute_event_properties("peak_velocity", name="saccade")
+            gaze.compute_event_properties(
+                ("location", {"position_column": "pixel", "method": "first"}),
+                name="saccade",
+            )
+            gaze.events.frame = gaze.events.frame.rename({"location": "start_location"})
+            gaze.compute_event_properties(
+                ("location", {"position_column": "pixel", "method": "last"}),
+                name="saccade",
+            )
+            gaze.events.frame = gaze.events.frame.rename({"location": "end_location"})
         gaze.unnest()
         gaze.events.unnest()
 
+        fixations = gaze.events.fixations
+        saccades = gaze.events.saccades
+
         fig, (x_ax, y_ax, vel_ax) = plt.subplots(3, 1, figsize=(10, 6), sharex=True)
-        x_ax.plot(gaze.samples["time"], gaze.samples["pixel_x"])
+        x_ax.plot(gaze.samples["time"], gaze.samples["pixel_x"], color="gray")
         x_ax.set_ylim(0, experiment_kwargs["screen_width_px"])
         x_ax.set_ylabel("X (px)")
-        y_ax.plot(gaze.samples["time"], gaze.samples["pixel_y"])
+        y_ax.plot(gaze.samples["time"], gaze.samples["pixel_y"], color="gray")
         y_ax.set_ylim(0, experiment_kwargs["screen_height_px"])
         y_ax.set_ylabel("Y (px)")
-        vel_ax.plot(
-            gaze.samples["time"],
-            gaze.samples["_velocity"],
-        )
+        vel_ax.plot(gaze.samples["time"], gaze.samples["_velocity"], color="gray")
         vel_ax.set_ylabel("Velocity (deg/s)")
         vel_ax.set_xlabel("Time (ms)")
-        for row in gaze.events.frame.iter_rows(named=True):
+        for row in fixations.iter_rows(named=True):
             x_ax.axvspan(row["onset"], row["offset"], color="red", alpha=0.3)
             y_ax.axvspan(row["onset"], row["offset"], color="red", alpha=0.3)
             vel_ax.axvspan(row["onset"], row["offset"], color="red", alpha=0.3)
+        for row in saccades.iter_rows(named=True):
+            x_ax.axvspan(row["onset"], row["offset"], color="blue", alpha=0.3)
+            y_ax.axvspan(row["onset"], row["offset"], color="blue", alpha=0.3)
+            vel_ax.axvspan(row["onset"], row["offset"], color="blue", alpha=0.3)
         fig
 
         fig, ax = plt.subplots(
@@ -206,24 +266,45 @@ if file is not None:
                 / experiment_kwargs["screen_width_px"],
             )
         )
-        ax.plot(gaze.samples["pixel_x"], gaze.samples["pixel_y"])
+        ax.plot(gaze.samples["pixel_x"], gaze.samples["pixel_y"], color="gray")
         ax.set_xlim(0, experiment_kwargs["screen_width_px"])
         ax.set_ylim(experiment_kwargs["screen_height_px"], 0)
         ax.set_xlabel("X (px)")
         ax.set_ylabel("Y (px)")
-        for row in gaze.events.frame.filter(pl.col("name") == "fixation").iter_rows(
-            named=True
-        ):
+        for row in fixations.iter_rows(named=True):
             ax.add_artist(
                 matplotlib.patches.Circle(
-                    (row["location_x"], row["location_y"]),
+                    (row["mean_location_x"], row["mean_location_y"]),
                     row["duration"] * 0.3,
                     color="red",
                     alpha=0.3,
                     zorder=10,
                 )
             )
+        for row in saccades.iter_rows(named=True):
+            ax.add_artist(
+                matplotlib.patches.FancyArrowPatch(
+                    (row["start_location_x"], row["start_location_y"]),
+                    (row["end_location_x"], row["end_location_y"]),
+                    color="blue",
+                    alpha=0.5,
+                    zorder=10,
+                    arrowstyle="->",
+                    mutation_scale=20,
+                    linewidth=2,
+                )
+            )
         fig
+
+        # Saccade main sequence plot
+        if saccade_algorithm is not None and not saccades.is_empty():
+            fig, ax = plt.subplots(figsize=(10, 6))
+            ax.scatter(
+                saccades["amplitude"], saccades["peak_velocity"], color="blue", alpha=0.5
+            )
+            ax.set_xlabel("Amplitude (deg)")
+            ax.set_ylabel("Peak velocity (deg/s)")
+            fig
 
         code = "import pymovements as pm\n\n"
         code += f"experiment = pm.Experiment(\n"
@@ -254,11 +335,17 @@ if file is not None:
             code += f"# Convert gaze positions to velocities\n"
             pos2vel_kwargs = ", ".join(f"{k}={v!r}" for k, v in velocity_kwargs.items())
             code += f"gaze.pos2vel({pos2vel_kwargs})\n"
-        code += f"# Detect fixations\n"
-        detect_kwargs = ", ".join(f"{k}={v!r}" for k, v in fixation_kwargs.items())
-        code += f"gaze.detect({fixation_algorithm!r}, {detect_kwargs})\n"
-        code += f"# Compute fixation location\n"
-        code += "gaze.compute_event_properties(('location', {'position_column': 'pixel'}))\n"
+        if fixation_algorithm is not None:
+            code += f"# Detect fixations\n"
+            detect_kwargs = ", ".join(f"{k}={v!r}" for k, v in fixation_kwargs.items())
+            code += f"gaze.detect({fixation_algorithm!r}, {detect_kwargs})\n"
+            code += "gaze.compute_event_properties(('location', {'position_column': 'pixel'}))\n"
+        if saccade_algorithm is not None:
+            code += f"# Detect saccades\n"
+            detect_kwargs = ", ".join(f"{k}={v!r}" for k, v in saccade_kwargs.items())
+            code += f"gaze.detect({saccade_algorithm!r}, {detect_kwargs})\n"
+            code += "gaze.compute_event_properties('amplitude')\n"
+            code += "gaze.compute_event_properties('peak_velocity')\n"
         st.code(code, language="python")
         st.download_button(
             "Download Python script",
