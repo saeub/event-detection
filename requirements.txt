@@ -1,4 +1,4 @@
 matplotlib==3.11.1
 polars==1.43.2
-pymovements==0.27.1
+pymovements @ git+https://github.com/saeub/pymovements@event-detection-app
 streamlit==1.61.1

@@ -215,23 +215,22 @@ if file is not None:
         if fixation_algorithm is not None:
             gaze.detect(fixation_algorithm, **fixation_kwargs, name="fixation")
             gaze.compute_event_properties(
-                ("location", {"position_column": "pixel"}), name="fixation"
+                ("location", {"position_column": "pixel"}), "mean_location", name="fixation"
             )
-            gaze.events.frame = gaze.events.frame.rename({"location": "mean_location"})
         if saccade_algorithm is not None:
             gaze.detect(saccade_algorithm, **saccade_kwargs, name="saccade")
             gaze.compute_event_properties("amplitude", name="saccade")
             gaze.compute_event_properties("peak_velocity", name="saccade")
             gaze.compute_event_properties(
                 ("location", {"position_column": "pixel", "method": "first"}),
+                "start_location",
                 name="saccade",
             )
-            gaze.events.frame = gaze.events.frame.rename({"location": "start_location"})
             gaze.compute_event_properties(
                 ("location", {"position_column": "pixel", "method": "last"}),
+                "end_location",
                 name="saccade",
             )
-            gaze.events.frame = gaze.events.frame.rename({"location": "end_location"})
         gaze.unnest()
         gaze.events.unnest()
 
@@ -339,13 +338,13 @@ if file is not None:
             code += f"# Detect fixations\n"
             detect_kwargs = ", ".join(f"{k}={v!r}" for k, v in fixation_kwargs.items())
             code += f"gaze.detect({fixation_algorithm!r}, {detect_kwargs})\n"
-            code += "gaze.compute_event_properties(('location', {'position_column': 'pixel'}))\n"
+            code += "gaze.compute_event_properties(('location', {'position_column': 'pixel'}), name='fixation')\n"
         if saccade_algorithm is not None:
             code += f"# Detect saccades\n"
             detect_kwargs = ", ".join(f"{k}={v!r}" for k, v in saccade_kwargs.items())
             code += f"gaze.detect({saccade_algorithm!r}, {detect_kwargs})\n"
-            code += "gaze.compute_event_properties('amplitude')\n"
-            code += "gaze.compute_event_properties('peak_velocity')\n"
+            code += "gaze.compute_event_properties('amplitude', name='saccade')\n"
+            code += "gaze.compute_event_properties('peak_velocity', name='saccade')\n"
         st.code(code, language="python")
         st.download_button(
             "Download Python script",
